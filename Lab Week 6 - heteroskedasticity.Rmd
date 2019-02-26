@@ -1,0 +1,107 @@
+---
+title: "Heteroscedasticity"
+output: html_document
+---
+```{r echo=F, warning=F}
+suppressPackageStartupMessages(library(car))
+suppressPackageStartupMessages(library(lmtest))
+suppressPackageStartupMessages(library(MASS))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(caret))
+```
+
+We have heteroskedasticity when the variance of the residuals varies with the fitted values of our response variable. It is customary to check for heteroscedasticity of residuals once you build a linear regression model. We do this because we want to check if the model thus built is unable to explain some pattern in the response variable (Y), that eventually shows up in the residuals. This would result in an inefficient and unstable regression model that could yield bizarre predictions later on. 
+
+We can often check for heteroskedasticity using an algorithmic approach or a visual approach. Let's do the algorithmic approach first. Two common tests are the Breush-Pagan test and the Non-Constant Variance test (NCV for short). 
+```{r echo=T, warning=FALSE}
+set.seed(1)
+n = 1000
+x=rnorm(n,mean=2,sd=5)
+err1 <- rnorm(n, mean = 0, sd=5+sqrt(x^2))
+y1 <- 6 + 4*x + err1
+mod = lm(y1~x)
+bptest(mod)
+ncvTest(mod)
+```
+
+Both these test have a p-value less than a significance level of 0.05, therefore we can reject the null hypothesis that the variance of the residuals is constant and infer that heteroscedasticity is indeed present.
+
+A plot of residuals versus predicted values is useful for checking the assumption of linearity and homoscedasticity. If the model does not meet the linear model assumption, we would expect to see residuals that are very large (big positive value or big negative value). If we have heteroskedasticity, we would be able to detect a visual pattern or trend in the relationship between our residuals and fitted values. The `fortify` function allows us to output our model information into a dataframe and thus call the necessary components when we use `ggplot`. The `broom` package also works well for this and I suggest you check it out.
+
+```{r echo=TRUE, message=FALSE}
+mod_data = fortify(mod)
+ggplot(mod_data,aes(y=.resid,x=.fitted))+geom_point(color="blue")+geom_hline(yintercept = 0)
+```
+
+##Example 2
+
+```{r}
+lmMod <- lm(dist ~ speed, data=cars) # initial model
+par(mfrow=c(2,2)) # init 4 charts in 1 panel
+plot(lmMod)
+```
+
+The plots we are interested in are at the top-left and bottom-left. The top-left is the chart of residuals vs fitted values, while in the bottom-left, we have standardised residuals on the Y axis. If there is absolutely no heteroscedastity, you should see a completely random, equal distribution of points throughout the range of the X axis and a flat red line.
+
+But in our case, as you can notice from the top-left plot, the red line is slightly curved and the residuals seem to increase as the fitted Y values increase. So, the inference here is, heteroscedasticity exists.
+
+##How to rectify?
+We can rebuild the model with new predictors, use a variable transformation such as the box-cox transformation, or calculate standard errors robust to the presence of heteroskedasticity. 
+
+A Box-cox transformation is a mathematical transformation of the variable to make it approximate a normal distribution. Often, doing a box-cox transformation of the Y variable solves the issue, which is what we do below. To learn more about the box-cox transformation, and the specific algorithm used, check out https://en.wikipedia.org/wiki/Power_transform .
+```{r}
+distBCMod <- caret::BoxCoxTrans(cars$dist)
+print(distBCMod)
+```
+The model for creating the box-cox transformed variable is ready. Lets now apply it on car$dist and append it to a new dataframe.
+
+```{r}
+cars <- cbind(cars, dist_new=predict(distBCMod, cars$dist)) # append the transformed variable to cars
+head(cars) # view the top 6 rows
+```
+
+The transformed data for our new regression model is ready. Lets build the model and check for heteroscedasticity.
+
+```{r}
+lmMod_bc <- lm(dist_new ~ speed, data=cars)
+bptest(lmMod_bc)
+```
+
+With a p-value of 0.91, we fail to reject the null hypothesis (that the variance of the residuals is constant) and therefore infer that the residuals are homoscedastic. Lets check this graphically as well.
+```{r}
+plot(lmMod_bc)
+```
+
+We have a much flatter line and evenly distributed residuals in the top-left plot.
+
+##Robust Standard Errors
+
+There are different ways of dealing with heteroscedasticity and autocorrelation. `VcovHAC` creates heteroskedasticity and autocorrelation consistent (HAC) estimation of the covariance matrix of the coefficient estimates in a (generalized) linear regression model. On the other hand, `vcovHC` creates heteroskedasticity-consistent estimation of the covariance matrix of the coefficient estimates in regression models. There are different types of specifications for how to deal with the errors. This is made using the type option in `VCOVHC`:
+This can be done using robust stadard errors which are calculated using the `vcovHC` function in R. I suggest you review the documentation for robust covariance matrix estimators found in the `sandwich` package. In Stata you would calculate robust standard errors using the `robust` command when estimating a linear model. 
+
+First we estimate the variance covariance matrix using a robust estimator, HC4. We then produce our HC4 robust standard errors. Different situations will call for different specifications of the robust covariance matrix calculation. 
+```{r}
+library(sandwich)
+vcovHC(lmMod, type = "HC4") #creates the variance-covariance matrix
+coeftest(lmMod, vcovHC(lmMod, type = "HC4"))
+summary(lmMod)$coefficients
+```
+Notice the difference between robust standard errors calculated with the `coeftes` function and regular standard errors when we call for the `summary` of our model.
+
+A mathematical treatment of the various robust standard error algorithms available in the `sandwich` package can be found below.
+$$
+\text{const}: \omega_i = \sigma^2 \\
+\text{HC0}: \omega_i = \hat{u}^2_i\\
+\text{HC1}: \omega_i = \frac{n}{n-k}\hat{u}^2_i\\
+\text{HC2}: \omega_i = \frac{\hat{u}^2_i}{1-h_i}\\
+\text{HC3}: \omega_i = \frac{\hat{u}^2_i}{(1-h_i)^2}\\
+\text{HC4}: \omega_i = \frac{\hat{u}^2_i}{(1-h_i)^\delta_i}\\
+\text{where h are the diagonal elements of the hat matrix (fitted values) and }\\
+\delta_i= \text{min}(4,h_i/\bar{h}) \text{and } \bar{h} \text{ is the mean of the hat matrix}
+$$
+
+
+
+
+
+
